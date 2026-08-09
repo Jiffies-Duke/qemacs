@@ -56,10 +56,12 @@
 
 static QEFont *x11_dpy_open_font(QEditScreen *s, int style, int size);
 static void x11_dpy_close_font(QEditScreen *s, QEFont **fontp);
+
 #ifdef CONFIG_XV
 static void xv_init(QEditScreen *s);
 #endif
 static void x11_handle_event(void *opaque);
+static Time x11_last_event_time = CurrentTime;
 
 typedef struct X11State {
     QEmacsState *qs;
@@ -564,7 +566,7 @@ static void x11_dpy_xor_rectangle(QEditScreen *s,
     X11State *xs = s->priv_data;
     unsigned long fg;
 
-    fg = get_x11_color(xs, QE_RGB(255, 255, 255));
+    fg = get_x11_color(xs, QERGB(255, 255, 255));
     XSetForeground(xs->display, xs->gc, fg);
     XSetFunction(xs->display, xs->gc, GXxor);
     XFillRectangle(xs->display, xs->dbuffer, xs->gc, x1, y1, w, h);
@@ -586,7 +588,7 @@ static QEFont *x11_dpy_open_font(QEditScreen *s, int style, int size)
     switch (style & QE_FONT_FAMILY_MASK) {
     default:
     case QE_FONT_FAMILY_FIXED:
-        family = font_family_str;
+        family = "monospace";
         break;
     case QE_FONT_FAMILY_SANS:
         family = "sans";
@@ -607,7 +609,7 @@ static QEFont *x11_dpy_open_font(QEditScreen *s, int style, int size)
                              XFT_SIZE, XftTypeInteger, size,
                              XFT_WEIGHT, XftTypeInteger, weight,
                              XFT_SLANT, XftTypeInteger, slant,
-                             0);
+                             NULL);
     if (!renderFont) {
         /* CG: don't know if this can happen, should try fallback? */
         qe_free(&font);
@@ -635,7 +637,7 @@ static void x11_dpy_close_font(QEditScreen *s, QEFont **fontp)
         qe_free(fontp);
     }
 }
-
+/*
 static int x11_term_glyph_width(QEditScreen *s, QEFont *font, char32_t cc) {
     X11State *xs = s->priv_data;
     XftFont *renderFont = font->priv_data;
@@ -644,6 +646,22 @@ static int x11_term_glyph_width(QEditScreen *s, QEFont *font, char32_t cc) {
 
     XftTextExtents32(xs->display, renderFont, &uc, 1, &gi);
     return gi.xOff;
+}
+*/
+static void x11_dpy_text_metrics(QEditScreen *s, QEFont *font,
+                                 QECharMetrics *metrics,
+                                 const char32_t *str, int len)
+{
+    X11State *xs = s->priv_data;
+    XftFont *renderFont = font->priv_data;
+    XGlyphInfo gi;
+
+    metrics->font_ascent = font->ascent;
+    metrics->font_descent = font->descent;
+
+    XftTextExtents32(xs->display, renderFont, str, len, &gi);
+    metrics->width = gi.xOff;
+
 }
 
 static void x11_dpy_draw_text(QEditScreen *s, QEFont *font,
@@ -1147,9 +1165,8 @@ static void x11_dpy_full_screen(QEditScreen *s, int full_screen)
 static void x11_dpy_selection_activate(QEditScreen *s)
 {
     X11State *xs = s->priv_data;
-
     /* own selection from now */
-    XSetSelectionOwner(xs->display, XA_PRIMARY, xs->window, CurrentTime);
+    XSetSelectionOwner(xs->display, XA_PRIMARY, xs->window, x11_last_event_time);
 }
 
 static Bool test_event(qe__unused__ Display *dpy, XEvent *ev,
@@ -1246,16 +1263,16 @@ static void selection_send(X11State *xs, XSelectionRequestEvent *rq)
     ev.xselection.time      = rq->time;
 
     if (rq->target == xa_targets) {
-        unsigned int target_list[1 + countof(xa_formats)];
+        Atom target_list[1 + countof(xa_formats)];
         int i;
 
         /* indicate which are supported types */
-        target_list[0] = xa_targets;
         for (i = 0; i < countof(xa_formats); i++)
-            target_list[i + 1] = xa_formats[i];
+            target_list[i] = xa_formats[i];
+        target_list[countof(xa_formats)] = xa_targets;
 
         XChangeProperty(xs->display, rq->requestor, rq->property,
-                        xa_targets, 8*sizeof(target_list[0]), PropModeReplace,
+                        XA_ATOM, 32, PropModeReplace,
                         (unsigned char *)target_list,
                         countof(target_list));
     } else
@@ -1297,7 +1314,8 @@ static void selection_send(X11State *xs, XSelectionRequestEvent *rq)
                         rq->target, 8, PropModeReplace,
                         buf, len);
         qe_free(&buf);
-    }
+    } else return;
+
     ev.xselection.property = rq->property;
     XSendEvent(xs->display, rq->requestor, False, 0, &ev);
 }
@@ -1419,6 +1437,7 @@ static void x11_handle_event(void *opaque)
         case ButtonRelease:
             {
                 XButtonEvent *xe = &xev.xbutton;
+	        x11_last_event_time = xe->time;
 
                 if (xev.type == ButtonPress)
                     ev->button_event.type = QE_BUTTON_PRESS_EVENT;
@@ -1454,6 +1473,7 @@ static void x11_handle_event(void *opaque)
         case MotionNotify:
             {
                 XMotionEvent *xe = &xev.xmotion;
+                x11_last_event_time = xe->time;
                 ev->button_event.type = QE_MOTION_EVENT;
                 // TODO: set shift state
                 ev->button_event.x = xe->x;
@@ -1476,6 +1496,7 @@ static void x11_handle_event(void *opaque)
             selection_send(xs, &xev.xselectionrequest);
             break;
         case KeyPress:
+            x11_last_event_time = xev.xkey.time;
 #ifdef X_HAVE_UTF8_STRING
             /* only present since XFree 4.0.2 */
             if (xs->xic) {

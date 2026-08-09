@@ -218,6 +218,9 @@ for x11path in /usr /opt/X11 /usr/X11R6; do
         if test -f "$x11path/include/X11/extensions/Xshm.h" ; then
             xshm="yes"
         fi
+        if test -f "$x11path/include/X11/Xft/Xft.h" ; then
+            xft="yes"
+        fi
         break
     fi
 done
@@ -244,6 +247,7 @@ echo "  --disable-x11            disable Xwindow support"
 echo "  --disable-xv             disable Xvideo extension support"
 echo "  --disable-xshm           disable XShm extension support"
 echo "  --disable-xrender        disable Xrender extension support"
+echo "  --disable-xft            disable Xft extension support"
 echo "  --disable-tiny           do not build the very small version"
 echo "  --disable-html           disable graphical html support"
 echo "  --disable-png            disable png support"
@@ -360,6 +364,9 @@ for opt do
         ;;
       --enable-xrender | --disable-xrender)
         xrender="$value"
+        ;;
+      --enable-xft | --disable-xft)
+        xft="$value"
         ;;
       --enable-png | --disable-png)
         png="$value"
@@ -564,6 +571,10 @@ if test "$x11" = "yes" ; then
     if test ! -z "$x11_includedir" ; then
         XCFLAGS="$XCFLAGS -I$x11_includedir"
     fi
+    if test "$xft" = "yes" ; then
+	XCFLAGS="$XCFLAGS -I$x11_includedir/freetype2"
+	XLIBS="-lXft"
+    fi
 fi
 
 echo "VERSION            " `head $source_path/VERSION`
@@ -580,7 +591,8 @@ echo "X11 support         $x11"
 if test "$x11" = "yes" ; then
   echo "Xvideo support      $xv"
   echo "XShm support        $xshm"
-  #echo "Xrender support     $xrender"
+  echo "Xrender support     $xrender"
+  echo "Xft support         $xft"
 fi
 echo "libpng support      $png"
 echo "FFMPEG support      $ffmpeg"
@@ -730,6 +742,11 @@ fi
 if test "$xrender" = "yes" ; then
   echo "#define CONFIG_XRENDER 1" >> $TMPH
   echo "CONFIG_XRENDER=yes" >> $TMPMAK
+fi
+
+if test "$xft" = "yes" ; then
+  echo "#define CONFIG_XFT 1" >> $TMPH
+  echo "CONFIG_XFT=yes" >> $TMPMAK
 fi
 
 if test "$tiny" = "yes" ; then
